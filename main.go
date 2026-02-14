@@ -19,6 +19,11 @@ func main() {
 		state.aof.Sync()
 	}
 
+	if len(conf.rdb) > 0 {
+		SyncRDB(conf)
+		InitRDBTrackers(conf)
+	}
+
 	l, err := net.Listen("tcp", ":6379")
 	if err != nil {
 		log.Fatal("cannot listen on :6379")

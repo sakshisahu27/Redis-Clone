@@ -66,6 +66,10 @@ func set(v *Value, state *AppState) *Value {
 			state.aof.w.Flush()
 		}
 	}
+
+	if len(state.conf.rdb) > 0 {
+		IncrRDBTrackers()
+	}
 	DB.mu.Unlock()
 	
 	return &Value{typ: STRING, str: "OK"}

@@ -12,6 +12,7 @@ const (
 	ARRAY ValueType = "*"
 	BULK ValueType = "$"
 	STRING ValueType = "+"
+	INTEGER ValueType = ":"
 	ERROR ValueType = "-"
 	NULL ValueType = ""
 )
@@ -20,6 +21,7 @@ type Value struct {
 	typ ValueType
 	bulk string
 	str string
+	num int
 	err string
 	array []Value
 }

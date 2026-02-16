@@ -24,8 +24,8 @@ func NewSnapshotTracker(rdb *RDBSnapshot) *SnapshotTracker {
 
 var trackers = []*SnapshotTracker{}
 
-func InitRDBTrackers(conf *Config) {
-	for _, rdb := range conf.rdb {
+func InitRDBTrackers(state *AppState) {
+	for _, rdb := range state.conf.rdb {
 		tracker := NewSnapshotTracker(&rdb)
 		trackers = append(trackers, tracker)
 
@@ -35,7 +35,7 @@ func InitRDBTrackers(conf *Config) {
 			for range tracker.ticker.C {
 				log.Printf("keys changed: %d - keys required to change: %d", tracker.keys, tracker.rdb.KeysChanged)
 				if tracker.keys >= tracker.rdb.KeysChanged {
-					SaveRDB(conf)
+					SaveRDB(state)
 				}
 				tracker.keys = 0
 			}
@@ -49,16 +49,26 @@ func IncrRDBTrackers() {
 	}
 }
 
-func SaveRDB(conf *Config) {
-	fp := path.Join(conf.dir, conf.rdbFn)
-	f, err := os.OpenFile(fp, os.O_CREATE|os.O_WRONLY, 0644)
+func SaveRDB(state *AppState){
+	fp := path.Join(state.conf.dir, state.conf.rdbFn)
+	f, err := os.OpenFile(fp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Println("Error opening RDB file:", err)
 		return
 	}
 	defer f.Close()
 
-	err = gob.NewEncoder(f).Encode(&DB.store)
+	log.Println("saving DB to RDB file")
+	if state.bgSaveRunning {
+		err = gob.NewEncoder(f).Encode(&state.dbCopy)
+		return
+	} else {
+		DB.mu.RLock()
+		err = gob.NewEncoder(f).Encode(&DB.store)
+		DB.mu.RUnlock()
+	}
+	
+
 	if err != nil {
 		log.Println("Error saving RDB file:", err)
 		return
@@ -68,9 +78,10 @@ func SaveRDB(conf *Config) {
 
 func SyncRDB(conf *Config) {
 	fp := path.Join(conf.dir, conf.rdbFn)
-	f, err := os.OpenFile(fp, os.O_CREATE|os.O_RDONLY, 0644)
+	f, err := os.Open(fp)	
 	if err != nil {
 		log.Println("Error opening RDB file:", err)
+		f.Close()
 		return
 	}
 	defer f.Close()

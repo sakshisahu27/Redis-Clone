@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"maps"
 	"net"
+	"path/filepath"
 )
 
 type Handler func(*Value, *AppState) *Value 
@@ -12,6 +14,13 @@ var Handlers = map[string]Handler{
 	"COMMAND": command,
 	"GET": get,
 	"SET": set,
+	"DEL": del,
+	"EXISTS": exists,
+	"KEYS": keys,
+	"SAVE": save,
+	"BGSAVE": bgSave,
+	"FLUSHDB": flushDB,
+	"DBSIZE": dbSize,
 }
 
 func handle(conn net.Conn, v *Value, state *AppState) {
@@ -73,6 +82,113 @@ func set(v *Value, state *AppState) *Value {
 	DB.mu.Unlock()
 	
 	return &Value{typ: STRING, str: "OK"}
+}
+
+func del(v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	var n int
+
+	DB.mu.Lock()
+	for _, arg := range args {
+		_, ok := DB.store[arg.bulk]
+			delete(DB.store, arg.bulk)
+		if ok {
+			n++
+		}
+	}
+	DB.mu.Unlock()
+	return &Value{typ: INTEGER, num: n}
+}
+
+func exists(v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	var n int
+
+	DB.mu.RLock()
+	for _, arg := range args {
+		_, ok := DB.store[arg.bulk]
+		if ok {
+			n++
+		}
+	}
+	DB.mu.RUnlock()
+	return &Value{typ: INTEGER, num: n}
+}
+
+func keys(v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	if len(args) >1 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'KEYS' command"}
+	}
+	
+	pattern := args[0].bulk
+	
+	DB.mu.RLock()
+	var matches []string
+	for key := range DB.store {
+		matched, err := filepath.Match(pattern, key)
+		if err != nil {
+			log.Printf("error matching keys: (pattern: %s), (key: %s) - %v", pattern, key, err)
+			continue
+		}
+		if matched {
+			matches = append(matches, key)
+		}
+	}
+	
+	DB.mu.RUnlock()
+
+	reply := Value{typ: ARRAY}
+
+	for _, m := range matches {
+		reply.array = append(reply.array, Value{typ: BULK, bulk: m})
+	}
+	return &reply
+}
+
+func save(v *Value, state *AppState) *Value {
+	SaveRDB(state)
+	return &Value{typ: STRING, str: "OK"}
+}
+
+func bgSave(v *Value, state *AppState) *Value {
+	if state.bgSaveRunning {
+		return &Value{typ: ERROR, err: "ERR background saving already in progress"}
+	}
+
+	c := make(map[string]string, len(DB.store))
+	DB.mu.RLock()
+	maps.Copy(c, DB.store)
+	DB.mu.RUnlock()
+
+	state.bgSaveRunning = true
+	state.dbCopy = c
+
+	go func() {
+		defer func () {
+			state.bgSaveRunning = false
+			state.dbCopy = nil
+		}()
+		SaveRDB(state)
+	}()
+	
+	return &Value{typ: STRING, str: "OK"}
+}
+
+func flushDB(v *Value, state *AppState) *Value {
+	DB.mu.Lock()
+	DB.store = map[string]string{}
+	DB.mu.Unlock()
+	
+	return &Value{typ: STRING, str: "OK"}
+}
+
+func dbSize(v *Value, state *AppState) *Value {
+	DB.mu.RLock()
+	size := len(DB.store)
+	DB.mu.RUnlock()
+
+	return &Value{typ: INTEGER, num: size}
 }
 
 func command(v *Value, state *AppState) *Value {

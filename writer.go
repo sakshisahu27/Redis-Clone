@@ -24,6 +24,8 @@ func (w *Writer) Deserialize(v *Value) (reply string) {
 		}
 	case STRING:
 		reply = fmt.Sprintf("%s%s\r\n", v.typ, v.str)
+	case INTEGER:
+		reply = fmt.Sprintf("%s%d\r\n", v.typ, v.num)
 	case BULK: 
 		reply = fmt.Sprintf("%s%d\r\n%s\r\n", v.typ, len(v.bulk), v.bulk)
 	case ERROR:

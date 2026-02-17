@@ -15,6 +15,8 @@ type Config struct {
 	aofEnabled bool
 	aofFn string
 	aofFsync FsyncMode
+	requirePass bool
+	password string
 }
 
 func NewConfig() *Config {
@@ -103,5 +105,8 @@ func parseLine(line string, conf *Config) {
 
 	case "dir":
 		conf.dir = args[1]
+	case "requirepass":
+		conf.requirePass = true
+		conf.password = args[1]
 	}
 }

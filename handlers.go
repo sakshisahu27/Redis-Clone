@@ -1,14 +1,12 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"maps"
-	"net"
 	"path/filepath"
 )
 
-type Handler func(*Value, *AppState) *Value 
+type Handler func(*Client,*Value, *AppState) *Value 
 
 var Handlers = map[string]Handler{
 	"COMMAND": command,
@@ -21,23 +19,36 @@ var Handlers = map[string]Handler{
 	"BGSAVE": bgSave,
 	"FLUSHDB": flushDB,
 	"DBSIZE": dbSize,
+	"AUTH": auth,
 }
 
-func handle(conn net.Conn, v *Value, state *AppState) {
+var SafeCMDs = []string{
+	"COMMAND",
+	"AUTH",
+}
+func handle(c *Client, v *Value, state *AppState) {
 	cmd := v.array[0].bulk
 	handler, ok := Handlers[cmd]
+	w := NewWriter(c.conn)
+
 	if !ok {
-		fmt.Printf("Invalid command: ", cmd)
+		w.Write(&Value{typ: ERROR, err: "ERR invalid command"})
+		w.Flush()
 		return
 	}
 
-	reply := handler(v, state)
-	w := NewWriter(conn)
+	if state.conf.requirePass && !c.authenticated && !contains(SafeCMDs, cmd) {
+		w.Write(&Value{typ: ERROR, err: "NOAUTH authentication required"})
+		w.Flush()
+		return
+	}
+
+	reply := handler(c, v, state)
 	w.Write(reply)
 	w.Flush()
 }
 
-func get(v *Value, state *AppState) *Value {
+func get(c *Client, v *Value, state *AppState) *Value {
 	args := v.array[1:]
 	if len(args) != 1 {
 		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'GET' command"}
@@ -55,7 +66,7 @@ func get(v *Value, state *AppState) *Value {
 	return &Value{typ: BULK, bulk: val}
 }
 
-func set(v *Value, state *AppState) *Value {
+func set(c *Client, v *Value, state *AppState) *Value {
 	args := v.array[1:]
 	if len(args) != 2 {
 		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'SET' command"}
@@ -84,7 +95,7 @@ func set(v *Value, state *AppState) *Value {
 	return &Value{typ: STRING, str: "OK"}
 }
 
-func del(v *Value, state *AppState) *Value {
+func del(c *Client,v *Value, state *AppState) *Value {
 	args := v.array[1:]
 	var n int
 
@@ -100,7 +111,7 @@ func del(v *Value, state *AppState) *Value {
 	return &Value{typ: INTEGER, num: n}
 }
 
-func exists(v *Value, state *AppState) *Value {
+func exists(c *Client, v *Value, state *AppState) *Value {
 	args := v.array[1:]
 	var n int
 
@@ -115,7 +126,7 @@ func exists(v *Value, state *AppState) *Value {
 	return &Value{typ: INTEGER, num: n}
 }
 
-func keys(v *Value, state *AppState) *Value {
+func keys(c *Client, v *Value, state *AppState) *Value {
 	args := v.array[1:]
 	if len(args) >1 {
 		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'KEYS' command"}
@@ -146,23 +157,23 @@ func keys(v *Value, state *AppState) *Value {
 	return &reply
 }
 
-func save(v *Value, state *AppState) *Value {
+func save(c *Client, v *Value, state *AppState) *Value {
 	SaveRDB(state)
 	return &Value{typ: STRING, str: "OK"}
 }
 
-func bgSave(v *Value, state *AppState) *Value {
+func bgSave(c *Client, v *Value, state *AppState) *Value {
 	if state.bgSaveRunning {
 		return &Value{typ: ERROR, err: "ERR background saving already in progress"}
 	}
 
-	c := make(map[string]string, len(DB.store))
+	cp := make(map[string]string, len(DB.store))
 	DB.mu.RLock()
-	maps.Copy(c, DB.store)
+	maps.Copy(cp, DB.store)
 	DB.mu.RUnlock()
 
 	state.bgSaveRunning = true
-	state.dbCopy = c
+	state.dbCopy = cp
 
 	go func() {
 		defer func () {
@@ -175,7 +186,7 @@ func bgSave(v *Value, state *AppState) *Value {
 	return &Value{typ: STRING, str: "OK"}
 }
 
-func flushDB(v *Value, state *AppState) *Value {
+func flushDB(c *Client, v *Value, state *AppState) *Value {
 	DB.mu.Lock()
 	DB.store = map[string]string{}
 	DB.mu.Unlock()
@@ -183,7 +194,7 @@ func flushDB(v *Value, state *AppState) *Value {
 	return &Value{typ: STRING, str: "OK"}
 }
 
-func dbSize(v *Value, state *AppState) *Value {
+func dbSize(c *Client, v *Value, state *AppState) *Value {
 	DB.mu.RLock()
 	size := len(DB.store)
 	DB.mu.RUnlock()
@@ -191,6 +202,23 @@ func dbSize(v *Value, state *AppState) *Value {
 	return &Value{typ: INTEGER, num: size}
 }
 
-func command(v *Value, state *AppState) *Value {
+func auth(c *Client, v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	if len(args) != 1 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'AUTH' command"}
+	}
+
+	p := args[0].bulk
+	if state.conf.password == p {
+		c.authenticated = true
+		return &Value{typ: STRING, str: "OK"}
+	} else {
+		c.authenticated = false
+		return &Value{typ: ERROR, err: "ERR invalid password"}
+	}
+
+}
+
+func command(c *Client, v *Value, state *AppState) *Value {
 	return &Value{typ: STRING, str: "OK"}
 }

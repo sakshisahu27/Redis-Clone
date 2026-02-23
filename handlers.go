@@ -4,6 +4,8 @@ import (
 	"log"
 	"maps"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 type Handler func(*Client,*Value, *AppState) *Value 
@@ -20,6 +22,8 @@ var Handlers = map[string]Handler{
 	"FLUSHDB": flushDB,
 	"DBSIZE": dbSize,
 	"AUTH": auth,
+	"EXPIRE": expire,
+	"TTL": ttl,
 }
 
 var SafeCMDs = []string{
@@ -63,7 +67,14 @@ func get(c *Client, v *Value, state *AppState) *Value {
 		return &Value{typ: NULL}
 	}
 
-	return &Value{typ: BULK, bulk: val}
+	if val.Exp.Unix() != UNIX_TS_EPOCH && time.Until(val.Exp).Seconds() > 0 {
+		DB.mu.Lock()
+		DB.Delete(name)
+		DB.mu.Unlock()
+		return &Value{typ: NULL}
+	}
+
+	return &Value{typ: BULK, bulk: val.V}
 }
 
 func set(c *Client, v *Value, state *AppState) *Value {
@@ -75,12 +86,12 @@ func set(c *Client, v *Value, state *AppState) *Value {
 	key := args[0].bulk
 	val := args[1].bulk
 	DB.mu.Lock()
-	DB.store[key] = val
+	DB.Set(key, val)
 
 	if state.conf.aofEnabled {
 		log.Println("saving AOF record")
 		state.aof.w.Write(v)
-		state.aof.w.Flush()  //this
+		state.aof.w.Flush()  
 
 		if state.conf.aofFsync == Always {
 			state.aof.w.Flush()
@@ -167,7 +178,7 @@ func bgSave(c *Client, v *Value, state *AppState) *Value {
 		return &Value{typ: ERROR, err: "ERR background saving already in progress"}
 	}
 
-	cp := make(map[string]string, len(DB.store))
+	cp := make(map[string]*Key, len(DB.store))
 	DB.mu.RLock()
 	maps.Copy(cp, DB.store)
 	DB.mu.RUnlock()
@@ -188,7 +199,7 @@ func bgSave(c *Client, v *Value, state *AppState) *Value {
 
 func flushDB(c *Client, v *Value, state *AppState) *Value {
 	DB.mu.Lock()
-	DB.store = map[string]string{}
+	DB.store = map[string]*Key{}
 	DB.mu.Unlock()
 	
 	return &Value{typ: STRING, str: "OK"}
@@ -217,6 +228,62 @@ func auth(c *Client, v *Value, state *AppState) *Value {
 		return &Value{typ: ERROR, err: "ERR invalid password"}
 	}
 
+}
+
+func expire(c *Client, v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	if len(args) != 2 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'EXPIRE' command"}
+	}
+
+	k := args[0].bulk
+	exp := args[1].bulk
+
+	expSecs, err := strconv.Atoi(exp) 
+	if err != nil {
+		return &Value{typ: ERROR, err: "ERR invalid expiry value"}
+	}
+	DB.mu.RLock()
+
+	key, ok := DB.store[k] 
+	if !ok {
+		return &Value{typ: INTEGER, num: 0}
+	}
+	key.Exp = time.Now().Add(time.Second * time.Duration(expSecs))
+	DB.mu.RUnlock()
+
+	return &Value{typ: INTEGER, num: 1}
+}
+
+func ttl(c *Client, v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	if len(args) != 1 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'TTL' command"}
+	}
+
+	k:= args[0].bulk
+
+	DB.mu.RLock()
+	key, ok := DB.store[k]
+	if !ok {
+		return &Value{typ: INTEGER, num: -2}
+	}
+	exp := key.Exp
+	DB.mu.RUnlock()
+
+	if exp.Unix() == UNIX_TS_EPOCH {
+		return &Value{typ: INTEGER, num: -1}
+	}
+
+	expSecs := int(time.Until(exp).Seconds())
+	if expSecs <= 0 {
+		DB.mu.Lock()
+		DB.Delete(k)
+		DB.mu.Unlock()
+		return &Value{typ: INTEGER, num: -2}
+	}
+
+	return &Value{typ: INTEGER, num: expSecs}
 }
 
 func command(c *Client, v *Value, state *AppState) *Value {

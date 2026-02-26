@@ -24,6 +24,7 @@ var Handlers = map[string]Handler{
 	"AUTH": auth,
 	"EXPIRE": expire,
 	"TTL": ttl,
+	"BGREWRITEAOF": bgrewriteaof,
 }
 
 var SafeCMDs = []string{
@@ -284,6 +285,19 @@ func ttl(c *Client, v *Value, state *AppState) *Value {
 	}
 
 	return &Value{typ: INTEGER, num: expSecs}
+}
+
+func bgrewriteaof(c *Client, v *Value, state *AppState) *Value {
+	go func () {
+		DB.mu.RLock()
+		cp := make(map[string]*Key, len(DB.store))
+		maps.Copy(cp, DB.store)
+		DB.mu.RUnlock()
+
+		state.aof.Rewrite(cp)
+	}()
+
+	return &Value{typ: STRING, str: "Background AOF rewriting started"}
 }
 
 func command(c *Client, v *Value, state *AppState) *Value {

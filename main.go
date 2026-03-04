@@ -47,7 +47,7 @@ func main() {
 		go func() {
 			handleConn(conn, state)
 			wg.Done()
-		}()		
+		}()
 	}
 	wg.Wait()
 }
@@ -67,7 +67,7 @@ func handleConn(conn net.Conn, state *AppState) {
 }
 
 type Client struct {
-	conn net.Conn
+	conn          net.Conn
 	authenticated bool
 }
 
@@ -76,14 +76,15 @@ func NewClient(conn net.Conn) *Client {
 }
 
 type AppState struct {
-	conf *Config
-	aof *Aof
+	conf          *Config
+	aof           *Aof
 	bgSaveRunning bool
-	dbCopy map[string]*Key
+	dbCopy        map[string]*Key
+	tx            *Transaction
 }
 
 func NewAppState(conf *Config) *AppState {
-	state := AppState{conf: conf} 
+	state := AppState{conf: conf}
 
 	if conf.aofEnabled {
 		state.aof = NewAof(conf)

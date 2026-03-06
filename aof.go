@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -31,9 +32,10 @@ func NewAof(conf *Config) *Aof {
 }
 
 func (aof *Aof) Sync() {
+	r := bufio.NewReader(aof.f)
 	for {
 		v := Value{}
-		err := v.readArray(aof.f)
+		err := v.readArray(r)
 		if err == io.EOF {
 			break
 		}
@@ -49,7 +51,7 @@ func (aof *Aof) Sync() {
 }
 
 // Write all SET commands to file
-func (aof *Aof) Rewrite(cp map[string]*Key) {
+func (aof *Aof) Rewrite(cp map[string]*Item) {
 	// reroute future AOF records to buffer
 	var b bytes.Buffer
 	aof.w = NewWriter(&b)
@@ -67,10 +69,10 @@ func (aof *Aof) Rewrite(cp map[string]*Key) {
 	fwriter := NewWriter(aof.f)
 	for k, v := range cp {
 		cmd := Value{typ: BULK, bulk: "SET"}
-		key := Value{typ: BULK, bulk: k}
+		Item := Value{typ: BULK, bulk: k}
 		val := Value{typ: BULK, bulk: v.V}
 
-		arr := Value{typ: ARRAY, array: []Value{cmd, key, val}}
+		arr := Value{typ: ARRAY, array: []Value{cmd, Item, val}}
 		fwriter.Write(&arr)
 	}
 	fwriter.Flush()

@@ -10,16 +10,17 @@ import (
 )
 
 type Config struct {
-	dir string
-	rdb []RDBSnapshot
-	rdbFn string
-	aofEnabled bool
-	aofFn string
-	aofFsync FsyncMode
+	dir         string
+	rdb         []RDBSnapshot
+	rdbFn       string
+	aofEnabled  bool
+	aofFn       string
+	aofFsync    FsyncMode
 	requirePass bool
-	password string
-	maxmem int64
-	eviction Eviction
+	password    string
+	maxmem      int64
+	eviction    Eviction
+	memsamples   int
 }
 
 func NewConfig() *Config {
@@ -27,22 +28,29 @@ func NewConfig() *Config {
 }
 
 type RDBSnapshot struct {
-	Secs int
+	Secs        int
 	KeysChanged int
 }
 
 type FsyncMode string
 
 const (
-	Always FsyncMode = "always"
+	Always   FsyncMode = "always"
 	EverySec FsyncMode = "everysec"
-	No FsyncMode = "no"
+	No       FsyncMode = "no"
 )
 
 type Eviction string
 
 const (
-	NoEviction Eviction = "noeviction"
+	NoEviction     Eviction = "noeviction"
+	AllKeysRandom  Eviction = "allkeys-random"
+	AllKeysLRU     Eviction = "allkeys-lru"
+	AllKeysLFU     Eviction = "allkeys-lfu"
+	VolatileLRU    Eviction = "volatile-lru"
+	VolatileLFU    Eviction = "volatile-lfu"
+	VolatileRandom Eviction = "volatile-random"
+	VolatileTTL    Eviction = "volatile-ttl"
 )
 
 func readConf(fn string) *Config {
@@ -91,7 +99,7 @@ func parseLine(line string, conf *Config) {
 		}
 
 		snapshot := RDBSnapshot{
-			Secs: secs, 
+			Secs:        secs,
 			KeysChanged: KeysChanged,
 		}
 		conf.rdb = append(conf.rdb, snapshot)
@@ -121,14 +129,21 @@ func parseLine(line string, conf *Config) {
 		maxmem, err := parseMem(args[1])
 		if err != nil {
 			log.Println("cannot parse memory. Defaulting to 0. error: ", err)
-			conf.maxmem = 0 
+			conf.maxmem = 0
 			break
 		}
 		conf.maxmem = maxmem
 	case "maxmemory-policy":
 		conf.eviction = Eviction(args[1])
+	case "max-memory-samples":
+		memsamples, err := strconv.Atoi(args[1])
+		if err != nil {
+			log.Println("cannot parse max-memory-samples. Defaulting to 50. error: ", err)
+			conf.memsamples = 50
+			break
+		}
+		conf.memsamples = memsamples
 	}
-
 }
 
 func parseMem(s string) (int64, error) {

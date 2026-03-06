@@ -8,15 +8,15 @@ import (
 )
 
 type Database struct {
-	store map[string]*Key
-	mu sync.RWMutex
-	mem int64
+	store map[string]*Item
+	mu    sync.RWMutex
+	mem   int64
 }
 
 func NewDatabase() *Database {
 	return &Database{
-		store: map[string]*Key{},
-		mu : sync.RWMutex{},
+		store: map[string]*Item{},
+		mu:    sync.RWMutex{},
 	}
 }
 
@@ -25,18 +25,71 @@ func (db *Database) evictKeys(state *AppState, requiredMem int64) error {
 		return errors.New("maximum memory reached")
 	}
 
+	samples := sampleKeys(state)
+
+	enoughMemFreed := func() bool {
+		if db.mem + requiredMem <= state.conf.maxmem {
+			return true
+		}
+		return false
+	}
+
+	evictUntilMemFreed := func(samples []sample) {
+		for _, s := range samples {
+			log.Println("evicting: ", s.k)
+			db.Delete(s.k)
+			if enoughMemFreed() {
+				break
+			}
+		}
+	}
+
+	switch state.conf.eviction {
+	case AllKeysRandom:
+		evictUntilMemFreed(samples)
+	}
+
 	return nil
+}
+
+func (db *Database) tryExpire(k string, i *Item) bool {
+	if i.shouldExpire() {
+		DB.mu.Lock()
+		DB.Delete(k)
+		DB.mu.Unlock()
+		return true
+	}
+	return false
+}
+
+func (db *Database) Get(k string) (i *Item, ok bool) {
+	db.mu.RLock()
+	item, ok := db.store[k]
+	if !ok {
+		return item, ok
+	}
+	expired := db.tryExpire(k, item)
+	if expired {
+		return &Item{}, false
+	}
+
+	item.Accessess++
+	item.LastAccess = time.Now()
+	db.mu.RUnlock()
+
+	log.Printf("item %s accessed %d times at: %v", k, item.Accessess, item.LastAccess)
+	return item, ok
 }
 
 func (db *Database) Set(k string, v string, state *AppState) error {
 	if old, ok := db.store[k]; ok {
 		oldmem := old.approxMemUsage(k)
-		db.mem -= oldmem	
+		db.mem -= oldmem
 	}
-	key := &Key{V: v}
+	key := &Item{V: v}
 	kmem := key.approxMemUsage(k)
 
-	outOfMem := state.conf.maxmem > 0 && db.mem + kmem > state.conf.maxmem
+	outOfMem := state.conf.maxmem > 0 && db.mem+kmem > state.conf.maxmem
 	if outOfMem {
 		err := db.evictKeys(state, kmem)
 		if err != nil {
@@ -65,13 +118,19 @@ func (db *Database) Delete(k string) {
 
 var DB = NewDatabase()
 
-type Key struct {
-	V string
-	Exp time.Time
+type Item struct {
+	V          string
+	Exp        time.Time
+	LastAccess time.Time
+	Accessess  int
 }
 
-func (key *Key) approxMemUsage(name string) int64 {
-	stringHeader :=  16
+func (item *Item) shouldExpire() bool {
+	return item.Exp.Unix() != UNIX_TS_EPOCH && time.Until(item.Exp).Seconds() <= 0 
+}
+
+func (key *Item) approxMemUsage(name string) int64 {
+	stringHeader := 16
 	expHeader := 24
 	mapEntrySize := 32
 
@@ -84,9 +143,9 @@ type Transaction struct {
 
 func NewTransaction() *Transaction {
 	return &Transaction{}
-} 
+}
 
 type TxCommand struct {
-	v *Value
+	v       *Value
 	handler Handler
 }

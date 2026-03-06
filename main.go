@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -55,9 +56,10 @@ func main() {
 func handleConn(conn net.Conn, state *AppState) {
 	log.Println("accepted new connection: ", conn.LocalAddr().String())
 	c := NewClient(conn)
+	r := bufio.NewReader(conn)
 	for {
 		v := Value{typ: ARRAY}
-		if err := v.readArray(conn); err != nil {
+		if err := v.readArray(r); err != nil {
 			log.Println(err)
 			break
 		}
@@ -79,7 +81,7 @@ type AppState struct {
 	conf          *Config
 	aof           *Aof
 	bgSaveRunning bool
-	dbCopy        map[string]*Key
+	dbCopy        map[string]*Item
 	tx            *Transaction
 }
 

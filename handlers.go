@@ -17,6 +17,7 @@ var Handlers = map[string]Handler{
 	"DEL":          del,
 	"EXISTS":       exists,
 	"KEYS":         keys,
+	"ITEMS":         Items,
 	"SAVE":         save,
 	"BGSAVE":       bgSave,
 	"FLUSHDB":      flushDB,
@@ -72,22 +73,13 @@ func get(c *Client, v *Value, state *AppState) *Value {
 	}
 
 	name := args[0].bulk
-	DB.mu.RLock()
-	val, ok := DB.store[name]
-	DB.mu.RUnlock()
+	item, ok := DB.Get(name)
 
 	if !ok {
 		return &Value{typ: NULL}
 	}
 
-	if val.Exp.Unix() != UNIX_TS_EPOCH && time.Until(val.Exp).Seconds() > 0 {
-		DB.mu.Lock()
-		DB.Delete(name)
-		DB.mu.Unlock()
-		return &Value{typ: NULL}
-	}
-
-	return &Value{typ: BULK, bulk: val.V}
+	return &Value{typ: BULK, bulk: item.V}
 }
 
 func set(c *Client, v *Value, state *AppState) *Value {
@@ -96,10 +88,10 @@ func set(c *Client, v *Value, state *AppState) *Value {
 		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'SET' command"}
 	}
 
-	key := args[0].bulk
+	Item := args[0].bulk
 	val := args[1].bulk
 	DB.mu.Lock()
-	err := DB.Set(key, val, state)
+	err := DB.Set(Item, val, state)
 	if err != nil {
 		DB.mu.Unlock()
 		return &Value{typ: ERROR, err: "ERR " + err.Error()}
@@ -159,7 +151,6 @@ func keys(c *Client, v *Value, state *AppState) *Value {
 	if len(args) > 1 {
 		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'KEYS' command"}
 	}
-
 	pattern := args[0].bulk
 
 	DB.mu.RLock()
@@ -170,8 +161,39 @@ func keys(c *Client, v *Value, state *AppState) *Value {
 			log.Printf("error matching keys: (pattern: %s), (key: %s) - %v", pattern, key, err)
 			continue
 		}
+
 		if matched {
 			matches = append(matches, key)
+		}
+	}
+	DB.mu.RUnlock()
+
+	reply := Value{typ: ARRAY}
+
+	for _, m := range matches {
+		reply.array = append(reply.array, Value{typ: BULK, bulk: m})
+	}
+	return &reply
+}
+
+func Items(c *Client, v *Value, state *AppState) *Value {
+	args := v.array[1:]
+	if len(args) > 1 {
+		return &Value{typ: ERROR, err: "ERR invalid number of arguments for 'ItemS' command"}
+	}
+
+	pattern := args[0].bulk
+
+	DB.mu.RLock()
+	var matches []string
+	for Item := range DB.store {
+		matched, err := filepath.Match(pattern, Item)
+		if err != nil {
+			log.Printf("error matching Items: (pattern: %s), (Item: %s) - %v", pattern, Item, err)
+			continue
+		}
+		if matched {
+			matches = append(matches, Item)
 		}
 	}
 
@@ -195,7 +217,7 @@ func bgSave(c *Client, v *Value, state *AppState) *Value {
 		return &Value{typ: ERROR, err: "ERR background saving already in progress"}
 	}
 
-	cp := make(map[string]*Key, len(DB.store))
+	cp := make(map[string]*Item, len(DB.store))
 	DB.mu.RLock()
 	maps.Copy(cp, DB.store)
 	DB.mu.RUnlock()
@@ -216,7 +238,7 @@ func bgSave(c *Client, v *Value, state *AppState) *Value {
 
 func flushDB(c *Client, v *Value, state *AppState) *Value {
 	DB.mu.Lock()
-	DB.store = map[string]*Key{}
+	DB.store = map[string]*Item{}
 	DB.mu.Unlock()
 
 	return &Value{typ: STRING, str: "OK"}
@@ -262,11 +284,11 @@ func expire(c *Client, v *Value, state *AppState) *Value {
 	}
 	DB.mu.RLock()
 
-	key, ok := DB.store[k]
+	Item, ok := DB.store[k]
 	if !ok {
 		return &Value{typ: INTEGER, num: 0}
 	}
-	key.Exp = time.Now().Add(time.Second * time.Duration(expSecs))
+	Item.Exp = time.Now().Add(time.Second * time.Duration(expSecs))
 	DB.mu.RUnlock()
 
 	return &Value{typ: INTEGER, num: 1}
@@ -281,11 +303,11 @@ func ttl(c *Client, v *Value, state *AppState) *Value {
 	k := args[0].bulk
 
 	DB.mu.RLock()
-	key, ok := DB.store[k]
+	Item, ok := DB.store[k]
 	if !ok {
 		return &Value{typ: INTEGER, num: -2}
 	}
-	exp := key.Exp
+	exp := Item.Exp
 	DB.mu.RUnlock()
 
 	if exp.Unix() == UNIX_TS_EPOCH {
@@ -306,7 +328,7 @@ func ttl(c *Client, v *Value, state *AppState) *Value {
 func bgrewriteaof(c *Client, v *Value, state *AppState) *Value {
 	go func() {
 		DB.mu.RLock()
-		cp := make(map[string]*Key, len(DB.store))
+		cp := make(map[string]*Item, len(DB.store))
 		maps.Copy(cp, DB.store)
 		DB.mu.RUnlock()
 

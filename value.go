@@ -38,9 +38,7 @@ func readLine(r *bufio.Reader) (string, error) {
 	return strings.TrimSuffix(line, "\r\n"), nil
 }
 
-func (v *Value) readArray(reader io.Reader) error {
-	r := bufio.NewReader(reader)
-
+func (v *Value) readArray(r *bufio.Reader) error {
 	line, err := readLine(r)
 	if err != nil {
 		return err
@@ -57,30 +55,33 @@ func (v *Value) readArray(reader io.Reader) error {
 	}
 
 	for range arrlen {
-		bulk := v.readBulk(r)
+		bulk, err := v.readBulk(r)
+		if err != nil {
+			log.Println(err)
+			break
+		}
 		v.array = append(v.array, bulk)
 	}
 	return nil
 }
 
-func (v *Value) readBulk(r *bufio.Reader) Value {
+func (v *Value) readBulk(r *bufio.Reader) (Value, error) {
 	line, err := readLine(r)
 	if err != nil {
-		log.Println("error readBulk(): ", err)
-		return Value{}
+		return Value{}, err
 	}
 	n, err := strconv.Atoi(line[1:])
 	if err != nil {
 		fmt.Println(err)
-		return Value{}
+		return Value{}, err
 	}
 
 	buf := make([]byte, n+2)
 	if _, err := io.ReadFull(r, buf); err != nil {
 		fmt.Println(err)
-		return Value{}
+		return Value{}, err
 	}
 	
 	bulk := string(buf[:n])
-	return Value{typ: BULK, bulk: bulk}
+	return Value{typ: BULK, bulk: bulk}, nil
 }

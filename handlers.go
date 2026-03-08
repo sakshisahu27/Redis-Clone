@@ -29,6 +29,7 @@ var Handlers = map[string]Handler{
 	"MULTI":        multi,
 	"EXEC":         _exec,
 	"DISCARD":      discard,
+	"MONITOR":      monitor,
 }
 
 var SafeCMDs = []string{
@@ -64,6 +65,14 @@ func handle(c *Client, v *Value, state *AppState) {
 	reply := handler(c, v, state)
 	w.Write(reply)
 	w.Flush()
+
+	go func() {
+		for _, monitor := range state.monitors {
+			if monitor != c {
+				monitor.writerMonitorLog(v)
+			}
+		}
+	}()
 }
 
 func get(c *Client, v *Value, state *AppState) *Value {
@@ -373,5 +382,10 @@ func discard(c *Client, v *Value, state *AppState) *Value {
 }
 
 func command(c *Client, v *Value, state *AppState) *Value {
+	return &Value{typ: STRING, str: "OK"}
+}
+
+func monitor(c *Client, v *Value, state *AppState) *Value {
+	state.monitors = append(state.monitors, c)
 	return &Value{typ: STRING, str: "OK"}
 }

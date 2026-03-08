@@ -75,6 +75,7 @@ func (db *Database) tryExpire(k string, i *Item) bool {
 
 func (db *Database) Get(k string) (i *Item, ok bool) {
 	db.mu.RLock()
+	defer db.mu.RUnlock()
 	item, ok := db.store[k]
 	if !ok {
 		return item, ok
@@ -86,7 +87,6 @@ func (db *Database) Get(k string) (i *Item, ok bool) {
 
 	item.Accessess++
 	item.LastAccess = time.Now()
-	db.mu.RUnlock()
 
 	log.Printf("item %s accessed %d times at: %v", k, item.Accessess, item.LastAccess)
 	return item, ok
@@ -128,35 +128,3 @@ func (db *Database) Delete(k string) {
 }
 
 var DB = NewDatabase()
-
-type Item struct {
-	V          string
-	Exp        time.Time
-	LastAccess time.Time
-	Accessess  int
-}
-
-func (item *Item) shouldExpire() bool {
-	return item.Exp.Unix() != UNIX_TS_EPOCH && time.Until(item.Exp).Seconds() <= 0 
-}
-
-func (key *Item) approxMemUsage(name string) int64 {
-	stringHeader := 16
-	expHeader := 24
-	mapEntrySize := 32
-
-	return int64(stringHeader + len(name) + stringHeader + len(key.V) + expHeader + mapEntrySize)
-}
-
-type Transaction struct {
-	cmds []*TxCommand
-}
-
-func NewTransaction() *Transaction {
-	return &Transaction{}
-}
-
-type TxCommand struct {
-	v       *Value
-	handler Handler
-}

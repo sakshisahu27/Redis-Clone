@@ -29,58 +29,68 @@ func (db *Database) evictKeys(state *AppState, requiredMem int64) error {
 	samples := sampleKeys(state)
 
 	enoughMemFreed := func() bool {
-		if db.mem + requiredMem <= state.conf.maxmem {
+		if db.mem+requiredMem <= state.conf.maxmem {
 			return true
 		}
 		return false
 	}
 
-	evictUntilMemFreed := func(samples []sample) {
+	evictUntilMemFreed := func(samples []sample) int {
+		var n int
 		for _, s := range samples {
 			log.Println("evicting: ", s.k)
 			db.Delete(s.k)
+			n++
 			if enoughMemFreed() {
 				break
 			}
 		}
+		return n
 	}
 
 	switch state.conf.eviction {
 	case AllKeysRandom:
-		evictUntilMemFreed(samples)
+		evictedKeys := evictUntilMemFreed(samples)
+		state.generalstats.evicted_keys += evictedKeys
+
 	case AllKeysLRU:
 		sort.Slice(samples, func(i, j int) bool {
 			return samples[i].v.LastAccess.After(samples[j].v.LastAccess)
 		})
-		evictUntilMemFreed(samples)
+		evictedKeys := evictUntilMemFreed(samples)
+		state.generalstats.evicted_keys += evictedKeys
+
 	case AllKeysLFU:
 		sort.Slice(samples, func(i, j int) bool {
 			return samples[i].v.Accessess < samples[j].v.Accessess
 		})
-		evictUntilMemFreed(samples)
+		evictedKeys := evictUntilMemFreed(samples)
+		state.generalstats.evicted_keys += evictedKeys
+
 	}
 
 	return nil
 }
 
-func (db *Database) tryExpire(k string, i *Item) bool {
+func (db *Database) tryExpire(k string, i *Item, state *AppState) bool {
 	if i.shouldExpire() {
 		DB.mu.Lock()
 		DB.Delete(k)
 		DB.mu.Unlock()
+		state.generalstats.expired_keys++
 		return true
 	}
 	return false
 }
 
-func (db *Database) Get(k string) (i *Item, ok bool) {
+func (db *Database) Get(k string, state *AppState) (i *Item, ok bool) {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	item, ok := db.store[k]
 	if !ok {
 		return item, ok
 	}
-	expired := db.tryExpire(k, item)
+	expired := db.tryExpire(k, item, state)
 	if expired {
 		return &Item{}, false
 	}
@@ -111,6 +121,10 @@ func (db *Database) Set(k string, v string, state *AppState) error {
 	db.store[k] = key
 	db.mem += kmem
 	log.Println("memory: ", db.mem)
+
+	if db.mem > state.peakMem {
+		state.peakMem = db.mem
+	}
 
 	return nil
 }

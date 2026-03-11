@@ -10,6 +10,7 @@ import (
 )
 
 type Config struct {
+	config_fp   string
 	dir         string
 	rdb         []RDBSnapshot
 	rdbFn       string
@@ -20,7 +21,7 @@ type Config struct {
 	password    string
 	maxmem      int64
 	eviction    Eviction
-	memsamples   int
+	memsamples  int
 }
 
 func NewConfig() *Config {
@@ -62,6 +63,8 @@ func readConf(fn string) *Config {
 		return conf
 	}
 	defer f.Close()
+
+	conf.config_fp = fn
 
 	s := bufio.NewScanner(f)
 

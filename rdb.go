@@ -15,7 +15,7 @@ import (
 type SnapshotTracker struct {
 	keys   int
 	ticker time.Ticker
-	rdb *RDBSnapshot
+	rdb    *RDBSnapshot
 }
 
 func NewSnapshotTracker(rdb *RDBSnapshot) *SnapshotTracker {
@@ -53,7 +53,7 @@ func IncrRDBTrackers() {
 	}
 }
 
-func SaveRDB(state *AppState){
+func SaveRDB(state *AppState) {
 	fp := path.Join(state.conf.dir, state.conf.rdbFn) //WRONLY -> RDWR
 	f, err := os.OpenFile(fp, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
@@ -111,11 +111,14 @@ func SaveRDB(state *AppState){
 	}
 
 	log.Println("saved RDB file")
+
+	state.rdbstats.rdb_last_save_ts = time.Now().Unix()
+	state.rdbstats.rdb_saves++
 }
 
 func SyncRDB(conf *Config) {
 	fp := path.Join(conf.dir, conf.rdbFn)
-	f, err := os.Open(fp)	
+	f, err := os.Open(fp)
 	if err != nil {
 		log.Println("Error opening RDB file:", err)
 		f.Close()
@@ -137,4 +140,4 @@ func Hash(r io.Reader) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}	
+}

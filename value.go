@@ -13,20 +13,20 @@ import (
 type ValueType string
 
 const (
-	ARRAY ValueType = "*"
-	BULK ValueType = "$"
-	STRING ValueType = "+"
+	ARRAY   ValueType = "*"
+	BULK    ValueType = "$"
+	STRING  ValueType = "+"
 	INTEGER ValueType = ":"
-	ERROR ValueType = "-"
-	NULL ValueType = ""
+	ERROR   ValueType = "-"
+	NULL    ValueType = ""
 )
 
 type Value struct {
-	typ ValueType
-	bulk string
-	str string
-	num int
-	err string
+	typ   ValueType
+	bulk  string
+	str   string
+	num   int
+	err   string
 	array []Value
 }
 
@@ -47,7 +47,7 @@ func (v *Value) readArray(r *bufio.Reader) error {
 	if line[0] != '*' {
 		return errors.New("expected array")
 	}
-	
+
 	arrlen, err := strconv.Atoi(string(line[1:]))
 	if err != nil {
 		fmt.Println(err)
@@ -81,7 +81,7 @@ func (v *Value) readBulk(r *bufio.Reader) (Value, error) {
 		fmt.Println(err)
 		return Value{}, err
 	}
-	
+
 	bulk := string(buf[:n])
 	return Value{typ: BULK, bulk: bulk}, nil
 }
